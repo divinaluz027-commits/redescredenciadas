@@ -52,53 +52,6 @@
             border-radius: 12px;
             box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
             background-color: #ffffff;
-            opacity: 0;
-            transform: translateY(15px);
-            transition: opacity 0.6s ease-out, transform 0.6s ease-out;
-        }
-
-        .pdf-page-canvas.loaded {
-            opacity: 1;
-            transform: translateY(0);
-        }
-
-        /* Indicador de Carregamento (Spinner) */
-        #loading-indicator {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 16px;
-            color: #94a3b8;
-            font-size: 0.95rem;
-            z-index: 10;
-            transition: opacity 0.3s ease;
-        }
-
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid rgba(255, 255, 255, 0.1);
-            border-top: 4px solid #3b82f6;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        /* Fallback de Download se falhar */
-        #fallback-link {
-            display: none;
-            margin-top: 10px;
-            color: #3b82f6;
-            text-decoration: underline;
-            cursor: pointer;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
         }
 
         /* Ajustes finos para celulares */
@@ -118,13 +71,6 @@
 </head>
 <body>
 
-    <!-- Indicador visual de carregamento -->
-    <div id="loading-indicator">
-        <div class="spinner"></div>
-        <p>Carregando documento...</p>
-        <a id="fallback-link" href="gdl.pdf" target="_blank">Clique aqui se o PDF não carregar</a>
-    </div>
-
     <!-- Área de rolagem das páginas do PDF -->
     <div id="pdf-scroll-container">
         <div class="pdf-wrapper" id="pdf-wrapper"></div>
@@ -140,22 +86,9 @@
             const pdfUrl = urlParams.get('file') || 'gdl.pdf';
             
             const wrapper = document.getElementById('pdf-wrapper');
-            const loader = document.getElementById('loading-indicator');
-            const fallbackLink = document.getElementById('fallback-link');
-
-            // Exibe o link alternativo caso demore mais de 3 segundos para carregar
-            const fallbackTimeout = setTimeout(() => {
-                fallbackLink.style.display = 'block';
-            }, 3000);
 
             // Carrega o documento PDF
             pdfjsLib.getDocument(pdfUrl).promise.then(pdf => {
-                clearTimeout(fallbackTimeout);
-                
-                // Oculta o loader
-                loader.style.opacity = '0';
-                setTimeout(() => loader.remove(), 300);
-
                 // Renderiza todas as páginas do PDF sequencialmente
                 for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
                     const canvas = document.createElement('canvas');
@@ -178,17 +111,11 @@
                             viewport: viewport
                         };
 
-                        page.render(renderContext).promise.then(() => {
-                            // Adiciona a classe 'loaded' para efeito suave de fade-in
-                            canvas.classList.add('loaded');
-                        });
+                        page.render(renderContext);
                     });
                 }
             }).catch(error => {
                 console.error('Erro ao carregar o PDF:', error);
-                loader.querySelector('p').textContent = 'Não foi possível carregar o PDF de forma integrada.';
-                fallbackLink.style.display = 'block';
-                fallbackLink.href = pdfUrl;
             });
         });
     </script>
