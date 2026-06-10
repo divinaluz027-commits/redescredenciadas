@@ -7,6 +7,8 @@
     <link rel="icon" href="fav.png" type="image/x-icon">
     <!-- Carrega o PDF.js do CDN de forma assíncrona -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- Importa o CSS da camada de anotações do PDF.js para os links -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
     <style>
         /* Reset de margens e ocupação total da tela */
         html, body { 
@@ -44,14 +46,41 @@
             align-items: center;
         }
 
+        /* Container de cada página (canvas + links) */
+        .pdf-page-container {
+            position: relative;
+            width: 100%;
+            display: block;
+            border-radius: 12px;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+            background-color: #ffffff;
+            overflow: hidden;
+        }
+
         /* Cada página renderizada em Canvas */
         .pdf-page-canvas {
             width: 100%;
             height: auto;
             display: block;
-            border-radius: 12px;
-            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
-            background-color: #ffffff;
+        }
+
+        /* Camada de anotações (links) posicionada sobre o canvas */
+        .annotationLayer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform-origin: 0 0;
+        }
+
+        /* Torna os links e suas seções clicáveis */
+        .annotationLayer section {
+            pointer-events: auto;
+            cursor: pointer;
+        }
+
+        .annotationLayer .linkAnnotation a {
+            pointer-events: auto;
+            cursor: pointer;
         }
 
         /* Ajustes finos para celulares */
@@ -63,7 +92,7 @@
                 width: 95%;
                 gap: 16px;
             }
-            .pdf-page-canvas {
+            .pdf-page-container {
                 border-radius: 8px;
             }
         }
@@ -91,15 +120,24 @@
             pdfjsLib.getDocument(pdfUrl).promise.then(pdf => {
                 // Renderiza todas as páginas do PDF sequencialmente
                 for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                    // Cria o container da página imediatamente para manter a ordem correta
+                    const pageContainer = document.createElement('div');
+                    pageContainer.className = 'pdf-page-container';
+                    
                     const canvas = document.createElement('canvas');
                     canvas.className = 'pdf-page-canvas';
-                    wrapper.appendChild(canvas);
+                    pageContainer.appendChild(canvas);
 
-                    pdf.getPage(pageNum).then(page => {
+                    const annotationDiv = document.createElement('div');
+                    annotationDiv.className = 'annotationLayer';
+                    pageContainer.appendChild(annotationDiv);
+
+                    wrapper.appendChild(pageContainer);
+
+                    pdf.getPage(pageNum).then(async page => {
                         const ctx = canvas.getContext('2d');
                         
                         // Renderiza em alta resolução (escala 2x) para telas Retina e boa qualidade
-                        const unscaledViewport = page.getViewport({ scale: 1 });
                         const targetScale = 2.0; 
                         const viewport = page.getViewport({ scale: targetScale });
 
@@ -111,7 +149,69 @@
                             viewport: viewport
                         };
 
-                        page.render(renderContext);
+                        await page.render(renderContext).promise;
+
+                        // Configura as dimensões da camada de anotações para coincidir com o render
+                        // Define --scale-factor que o CSS do PDF.js usa para posicionar as anotações
+                        annotationDiv.style.width = viewport.width + 'px';
+                        annotationDiv.style.height = viewport.height + 'px';
+                        annotationDiv.style.setProperty('--scale-factor', targetScale);
+
+                        // Busca as anotações da página (links)
+                        const annotations = await page.getAnnotations({ intent: 'display' });
+
+                        const mockLinkService = {
+                            externalLinkTarget: 2, // Abre em nova aba (_blank)
+                            externalLinkRel: 'noopener noreferrer',
+                            externalLinkEnabled: true,
+                            addLinkAttributes(link, url, newWindow = true) {
+                                link.href = url;
+                                if (newWindow) {
+                                    link.target = '_blank';
+                                    link.rel = 'noopener noreferrer';
+                                }
+                            },
+                            getDestinationHash: (dest) => "",
+                            getAnchorUrl: (hash) => "",
+                            setDocument: (pdfDocument) => {},
+                            setViewer: (viewer) => {},
+                            goToDestination: (dest) => Promise.resolve(),
+                            navigateTo: (dest) => {},
+                        };
+
+                        // PDF.js 3.x: AnnotationLayer é uma classe, precisa instanciar
+                        const annotationLayer = new pdfjsLib.AnnotationLayer({
+                            div: annotationDiv,
+                            page: page,
+                            viewport: viewport.clone({ dontFlip: true }),
+                            accessibilityManager: null,
+                            annotationCanvasMap: null,
+                            annotationEditorUIManager: null,
+                            l10n: null,
+                        });
+
+                        await annotationLayer.render({
+                            annotations: annotations,
+                            linkService: mockLinkService,
+                        });
+
+                        // Função para atualizar o redimensionamento responsivo
+                        const updateScale = () => {
+                            const displayWidth = pageContainer.clientWidth;
+                            if (displayWidth > 0) {
+                                const scale = displayWidth / viewport.width;
+                                annotationDiv.style.transform = `scale(${scale})`;
+                            }
+                        };
+
+                        // Ajusta a escala inicial
+                        updateScale();
+
+                        // Registra o ResizeObserver para manter a escala correta ao redimensionar a janela
+                        const resizeObserver = new ResizeObserver(() => {
+                            updateScale();
+                        });
+                        resizeObserver.observe(pageContainer);
                     });
                 }
             }).catch(error => {
