@@ -11,6 +11,10 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
     <style>
         /* Reset de margens e ocupação total da tela */
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
         html, body { 
             margin: 0;
             padding: 0;
@@ -19,6 +23,7 @@
             background-color: #0f172a; /* Fundo escuro premium */
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             overflow: hidden;
+            color: #f8fafc;
         }
 
         /* Container de rolagem dos PDFs */
@@ -30,15 +35,14 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 24px 0;
-            box-sizing: border-box;
+            padding: 24px 0 80px 0;
             scroll-behavior: smooth;
             -webkit-overflow-scrolling: touch; /* Rolagem suave em dispositivos iOS */
         }
 
         /* Container interno para limitar a largura máxima das páginas */
         .pdf-wrapper {
-            width: 90%;
+            width: 92%;
             max-width: 900px;
             display: flex;
             flex-direction: column;
@@ -46,15 +50,43 @@
             align-items: center;
         }
 
-        /* Container de cada página (canvas + links) */
+        /* Container de cada página (canvas + links + skeleton) */
         .pdf-page-container {
             position: relative;
             width: 100%;
+            min-height: 300px;
             display: block;
             border-radius: 12px;
             box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
-            background-color: #ffffff;
+            background-color: #1e293b;
             overflow: hidden;
+            transition: min-height 0.3s ease;
+        }
+
+        /* Skeleton loader animado para quando a página está carregando */
+        .pdf-skeleton {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+            background-size: 200% 100%;
+            animation: loadingSkeleton 1.5s infinite ease-in-out;
+            z-index: 1;
+            color: #94a3b8;
+            font-size: 14px;
+        }
+
+        @keyframes loadingSkeleton {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        .pdf-page-container.rendered .pdf-skeleton {
+            display: none;
         }
 
         /* Cada página renderizada em Canvas */
@@ -62,6 +94,8 @@
             width: 100%;
             height: auto;
             display: block;
+            position: relative;
+            z-index: 2;
         }
 
         /* Camada de anotações (links) posicionada sobre o canvas */
@@ -70,6 +104,7 @@
             top: 0;
             left: 0;
             transform-origin: 0 0;
+            z-index: 3;
         }
 
         /* Torna os links e suas seções clicáveis */
@@ -83,10 +118,62 @@
             cursor: pointer;
         }
 
-        /* Ajustes finos para celulares */
+        /* Indicador inicial de carregamento do documento */
+        #global-loader {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            z-index: 100;
+            background: rgba(15, 23, 42, 0.9);
+            padding: 24px 32px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(8px);
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-left-color: #38bdf8;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Badge flutuante de paginação */
+        #page-badge {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #f8fafc;
+            padding: 8px 18px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+            z-index: 50;
+            display: none;
+            letter-spacing: 0.5px;
+        }
+
+        /* Ajustes para celulares */
         @media (max-width: 600px) {
             #pdf-scroll-container {
-                padding: 12px 0;
+                padding: 12px 0 70px 0;
             }
             .pdf-wrapper {
                 width: 95%;
@@ -94,11 +181,28 @@
             }
             .pdf-page-container {
                 border-radius: 8px;
+                min-height: 200px;
+            }
+            #page-badge {
+                bottom: 16px;
+                padding: 6px 14px;
+                font-size: 13px;
             }
         }
     </style>
 </head>
 <body>
+
+    <!-- Spinner inicial de carregamento -->
+    <div id="global-loader">
+        <div class="spinner"></div>
+        <div style="font-size: 14px; color: #cbd5e1;">Carregando documento...</div>
+    </div>
+
+    <!-- Badge flutuante indicando a página atual -->
+    <div id="page-badge">
+        Página <span id="current-page">1</span> de <span id="total-pages">--</span>
+    </div>
 
     <!-- Área de rolagem das páginas do PDF -->
     <div id="pdf-scroll-container">
@@ -110,76 +214,185 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Permite carregar outro arquivo opcionalmente via URL (ex: ?file=outro.pdf)
             const urlParams = new URLSearchParams(window.location.search);
             const pdfUrl = urlParams.get('file') || 'gdl.pdf';
             
             const wrapper = document.getElementById('pdf-wrapper');
+            const globalLoader = document.getElementById('global-loader');
+            const pageBadge = document.getElementById('page-badge');
+            const currentPageEl = document.getElementById('current-page');
+            const totalPagesEl = document.getElementById('total-pages');
+            const scrollContainer = document.getElementById('pdf-scroll-container');
 
-            // Carrega o documento PDF
-            pdfjsLib.getDocument(pdfUrl).promise.then(pdf => {
-                // Renderiza todas as páginas do PDF sequencialmente
+            // Armazena as instâncias e status de cada página
+            const pageStates = new Map();
+            let pdfDoc = null;
+
+            // Serviço de links reutilizável para a camada de anotações
+            const mockLinkService = {
+                externalLinkTarget: 2, // _blank
+                externalLinkRel: 'noopener noreferrer',
+                externalLinkEnabled: true,
+                addLinkAttributes(link, url, newWindow = true) {
+                    link.href = url;
+                    if (newWindow) {
+                        link.target = '_blank';
+                        link.rel = 'noopener noreferrer';
+                    }
+                },
+                getDestinationHash: () => "",
+                getAnchorUrl: () => "",
+                setDocument: () => {},
+                setViewer: () => {},
+                goToDestination: () => Promise.resolve(),
+                navigateTo: () => {},
+            };
+
+            // Otimizações para conexões móveis 4G (carregamento sob demanda)
+            const loadingTask = pdfjsLib.getDocument({
+                url: pdfUrl,
+                disableAutoFetch: true,  // Baixa apenas o que for estritamente necessário
+                disableStream: false,
+                cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+                cMapPacked: true,
+            });
+
+            loadingTask.promise.then(async pdf => {
+                pdfDoc = pdf;
+                totalPagesEl.textContent = pdf.numPages;
+                globalLoader.style.display = 'none';
+                pageBadge.style.display = 'block';
+
+                // Obter proporção de aspecto da 1ª página para definir min-height preciso nos placeholders
+                let aspectRatio = 1.414; // A4 padrão como fallback
+                try {
+                    const firstPage = await pdf.getPage(1);
+                    const vp = firstPage.getViewport({ scale: 1.0 });
+                    aspectRatio = vp.height / vp.width;
+                } catch (e) {
+                    console.warn('Não foi possível obter proporção da 1ª página:', e);
+                }
+
+                // Cria os containers das páginas vazios (placeholders leves)
                 for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-                    // Cria o container da página imediatamente para manter a ordem correta
                     const pageContainer = document.createElement('div');
                     pageContainer.className = 'pdf-page-container';
-                    
-                    const canvas = document.createElement('canvas');
-                    canvas.className = 'pdf-page-canvas';
-                    pageContainer.appendChild(canvas);
+                    pageContainer.dataset.pageNum = pageNum;
 
-                    const annotationDiv = document.createElement('div');
-                    annotationDiv.className = 'annotationLayer';
-                    pageContainer.appendChild(annotationDiv);
+                    // Ajusta altura estimada do container baseada no suporte do dispositivo
+                    const estimatedWidth = Math.min(window.innerWidth * 0.92, 900);
+                    pageContainer.style.minHeight = (estimatedWidth * aspectRatio) + 'px';
+
+                    // Adiciona Skeleton Loader
+                    const skeleton = document.createElement('div');
+                    skeleton.className = 'pdf-skeleton';
+                    skeleton.innerHTML = `<div class="spinner" style="width:24px;height:24px;border-width:3px;"></div> Pág. ${pageNum}`;
+                    pageContainer.appendChild(skeleton);
 
                     wrapper.appendChild(pageContainer);
 
-                    pdf.getPage(pageNum).then(async page => {
-                        const ctx = canvas.getContext('2d');
-                        
-                        // Renderiza em alta resolução (escala 2x) para telas Retina e boa qualidade
-                        const targetScale = 2.0; 
-                        const viewport = page.getViewport({ scale: targetScale });
+                    pageStates.set(pageNum, {
+                        container: pageContainer,
+                        rendered: false,
+                        rendering: false
+                    });
+                }
 
-                        canvas.height = viewport.height;
-                        canvas.width = viewport.width;
+                // IntersectionObserver para carregar/renderizar páginas apenas quando entrarem no viewport (ou perto)
+                const observerOptions = {
+                    root: scrollContainer,
+                    rootMargin: '300px 0px 300px 0px', // Começa a carregar 300px antes de aparecer
+                    threshold: 0.01
+                };
 
-                        const renderContext = {
-                            canvasContext: ctx,
-                            viewport: viewport
-                        };
+                const pageObserver = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        const pageNum = parseInt(entry.target.dataset.pageNum, 10);
+                        const state = pageStates.get(pageNum);
 
-                        await page.render(renderContext).promise;
+                        if (entry.isIntersecting) {
+                            if (state && !state.rendered && !state.rendering) {
+                                renderPage(pageNum);
+                            }
+                        }
+                    });
+                }, observerOptions);
 
-                        // Configura as dimensões da camada de anotações para coincidir com o render
-                        // Define --scale-factor que o CSS do PDF.js usa para posicionar as anotações
-                        annotationDiv.style.width = viewport.width + 'px';
-                        annotationDiv.style.height = viewport.height + 'px';
-                        annotationDiv.style.setProperty('--scale-factor', targetScale);
+                // Observa todas as páginas
+                pageStates.forEach((state) => {
+                    pageObserver.observe(state.container);
+                });
 
-                        // Busca as anotações da página (links)
-                        const annotations = await page.getAnnotations({ intent: 'display' });
+                // IntersectionObserver para atualizar o número da página atual na badge flutuante
+                const badgeObserver = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            const pageNum = entry.target.dataset.pageNum;
+                            currentPageEl.textContent = pageNum;
+                        }
+                    });
+                }, {
+                    root: scrollContainer,
+                    threshold: 0.5 // Atualiza quando pelo menos 50% da página estiver visível
+                });
 
-                        const mockLinkService = {
-                            externalLinkTarget: 2, // Abre em nova aba (_blank)
-                            externalLinkRel: 'noopener noreferrer',
-                            externalLinkEnabled: true,
-                            addLinkAttributes(link, url, newWindow = true) {
-                                link.href = url;
-                                if (newWindow) {
-                                    link.target = '_blank';
-                                    link.rel = 'noopener noreferrer';
-                                }
-                            },
-                            getDestinationHash: (dest) => "",
-                            getAnchorUrl: (hash) => "",
-                            setDocument: (pdfDocument) => {},
-                            setViewer: (viewer) => {},
-                            goToDestination: (dest) => Promise.resolve(),
-                            navigateTo: (dest) => {},
-                        };
+                pageStates.forEach((state) => {
+                    badgeObserver.observe(state.container);
+                });
 
-                        // PDF.js 3.x: AnnotationLayer é uma classe, precisa instanciar
+            }).catch(error => {
+                console.error('Erro ao carregar o PDF:', error);
+                globalLoader.innerHTML = `<div style="color: #f87171; text-align: center;">Erro ao carregar o documento.<br><small>${error.message || ''}</small></div>`;
+            });
+
+            // Função para renderizar uma página individual e seus links sob demanda
+            async function renderPage(pageNum) {
+                const state = pageStates.get(pageNum);
+                if (!state || state.rendered || state.rendering) return;
+
+                state.rendering = true;
+
+                try {
+                    const page = await pdfDoc.getPage(pageNum);
+                    const container = state.container;
+
+                    // Cria o canvas e a camada de anotações
+                    const canvas = document.createElement('canvas');
+                    canvas.className = 'pdf-page-canvas';
+
+                    const annotationDiv = document.createElement('div');
+                    annotationDiv.className = 'annotationLayer';
+
+                    // Otimização de nitidez e performance de renderização no celular
+                    const dpr = Math.min(window.devicePixelRatio || 1, 2); // limita a 2x para economizar RAM
+                    const targetScale = dpr * 1.5; 
+                    const viewport = page.getViewport({ scale: targetScale });
+
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+
+                    const ctx = canvas.getContext('2d');
+                    const renderContext = {
+                        canvasContext: ctx,
+                        viewport: viewport
+                    };
+
+                    // Renderiza o Canvas
+                    await page.render(renderContext).promise;
+
+                    // Adiciona canvas ao container
+                    container.appendChild(canvas);
+                    container.appendChild(annotationDiv);
+                    container.classList.add('rendered');
+
+                    // Configura a camada de anotações (links do PDF)
+                    annotationDiv.style.width = viewport.width + 'px';
+                    annotationDiv.style.height = viewport.height + 'px';
+                    annotationDiv.style.setProperty('--scale-factor', targetScale);
+
+                    const annotations = await page.getAnnotations({ intent: 'display' });
+
+                    if (annotations.length > 0) {
                         const annotationLayer = new pdfjsLib.AnnotationLayer({
                             div: annotationDiv,
                             page: page,
@@ -194,29 +407,31 @@
                             annotations: annotations,
                             linkService: mockLinkService,
                         });
+                    }
 
-                        // Função para atualizar o redimensionamento responsivo
-                        const updateScale = () => {
-                            const displayWidth = pageContainer.clientWidth;
-                            if (displayWidth > 0) {
-                                const scale = displayWidth / viewport.width;
-                                annotationDiv.style.transform = `scale(${scale})`;
-                            }
-                        };
+                    // Ajusta escala responsiva da camada de anotações sobre o canvas
+                    const updateScale = () => {
+                        const displayWidth = container.clientWidth;
+                        if (displayWidth > 0) {
+                            const scale = displayWidth / viewport.width;
+                            annotationDiv.style.transform = `scale(${scale})`;
+                        }
+                    };
 
-                        // Ajusta a escala inicial
+                    updateScale();
+
+                    const resizeObserver = new ResizeObserver(() => {
                         updateScale();
-
-                        // Registra o ResizeObserver para manter a escala correta ao redimensionar a janela
-                        const resizeObserver = new ResizeObserver(() => {
-                            updateScale();
-                        });
-                        resizeObserver.observe(pageContainer);
                     });
+                    resizeObserver.observe(container);
+
+                    state.rendered = true;
+                } catch (err) {
+                    console.error(`Erro ao renderizar a página ${pageNum}:`, err);
+                } finally {
+                    state.rendering = false;
                 }
-            }).catch(error => {
-                console.error('Erro ao carregar o PDF:', error);
-            });
+            }
         });
     </script>
 </body>
